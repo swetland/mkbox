@@ -1,6 +1,6 @@
 /* mkbox.c
  *
- * Copyright 2011 Brian Swetland <swetland@frotz.net>
+ * Copyright 2014 Brian Swetland <swetland@frotz.net>
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
