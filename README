@@ -1,0 +1,56 @@
+
+mkbox: an experiment in nonprivileged sandboxing in Linux
+---------------------------------------------------------
+
+Requires kernel 3.12 or newer with CONFIG_USER_NS.
+
+Tested on Ubuntu 14.04 LTS / Linux 3.13.7.
+
+Huge thanks to Andy Lutomirski, who provided the roadmap in the form of
+a patch to Sandstorm (https://github.com/kentonv/sandstorm/pull/12) as
+well as kindly assisting with some early debugging as I fell into various
+pits he had previously explored.
+
+Disclaimer:  This is a toy built to learn about these APIs and is
+certainly incomplete, likely buggy, etc.  Use at your own risk.
+
+"make test" will build mkbox and create sandbox (which will be r/o /),
+and databox (which will be r/w /data), and copy /bin/busybox into
+sandbox/bin and create busybox's symlinks in there as well, then
+invoke: mkbox sandbox `pwd`/databox 
+
+computer$ id
+uid=1000(somebody) gid=1000(somebody) groups=1000(somebody)
+
+computer$ make test
+cc -Wall -O1 -g -o mkbox mkbox.c
+mkdir -p sandbox databox sandbox/bin
+cp /bin/busybox sandbox/bin
+chmod 755 sandbox/bin/busybox
+( cd sandbox/bin && for x in $(busybox --list) ; do ln -fs busybox $x ; done )
+./mkbox sandbox `pwd`/databox
+mkbox: pid=14259, child=14260
+
+
+BusyBox v1.21.1 (Ubuntu 1:1.21.0-1ubuntu1) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+/ $ id
+uid=3333 gid=3333 groups=65534,3333
+
+/ $ ls -l
+drwxrwxr-x    2 3333     3333          4096 Apr 27 04:34 bin
+drwxrwxr-x    2 3333     3333          4096 Apr 27 04:33 data
+drwxr-xr-x    2 3333     3333            80 Apr 27 04:34 dev
+
+
+/* in another shell */
+
+computer$ cat /proc/14259/mounts
+rootfs / rootfs rw 0 0
+/dev/root / ext3 ro,nosuid,noatime,errors=remount-ro,barrier=0,data=writeback 0 0
+/dev/root /data ext3 rw,noatime,errors=remount-ro,barrier=0,data=writeback 0 0
+sandbox-dev /dev tmpfs ro,nosuid,noexec,noatime,size=64k,nr_inodes=16,mode=755,uid=1000,gid=1000 0 0
+devtmpfs /dev/null devtmpfs rw,relatime,size=1019296k,nr_inodes=254824,mode=755 0 0
+devtmpfs /dev/zero devtmpfs rw,relatime,size=1019296k,nr_inodes=254824,mode=755 0 0
+
