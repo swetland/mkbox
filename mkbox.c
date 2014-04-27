@@ -77,6 +77,9 @@ int main(int argc, char **argv) {
 	ok(unshare, CLONE_NEWPID|CLONE_NEWNS|CLONE_NEWUTS|
 		CLONE_NEWIPC|CLONE_NEWUSER);
 
+	/* ensure that changes to our mount namespace do not "leak" to
+	 * outside namespaces (what mount --make-rprivate / does)
+	 */
 	mount("none", "/", NULL, MS_REC|MS_PRIVATE, NULL);
 
 	/* mount the sandbox on top of itself in our new namespace */
