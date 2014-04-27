@@ -28,8 +28,12 @@
 #include <sys/mount.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <linux/capability.h>
 
-int pivot_root(const char *new_root, const char *put_old); /* header? */
+/* can't find headers for these, but they're in glibc... */
+int pivot_root(const char *new_root, const char *put_old);
+int capset(cap_user_header_t h, cap_user_data_t d);
+int capset(cap_user_header_t h, cap_user_data_t d);
 
 static int checkreturn(int res, const char *name, int line) {
 	if (res >= 0)
@@ -40,6 +44,15 @@ static int checkreturn(int res, const char *name, int line) {
 }
 
 #define ok(fname, arg...) checkreturn(fname(arg), #fname, __LINE__)
+
+int dropcaps(void) {
+	struct __user_cap_header_struct header;
+	struct __user_cap_data_struct data[_LINUX_CAPABILITY_U32S_3];
+	header.version = _LINUX_CAPABILITY_VERSION_3;
+	header.pid = 0;
+	memset(data, 0, sizeof(data));
+	return capset(&header, data);
+}
 
 int main(int argc, char **argv) {
 	char buf[1024];
@@ -127,6 +140,9 @@ int main(int argc, char **argv) {
 	ok(mount, "/", "/", NULL,
 		MS_RDONLY|MS_NOSUID|MS_REMOUNT|MS_NOATIME|MS_BIND|MS_RDONLY,
 		NULL);
+
+	/* discard all capability bits */
+	ok(dropcaps);
 
 	/* we must fork to become pid 1 in the new pid namespace */
 	cpid = ok(fork);
