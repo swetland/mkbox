@@ -203,6 +203,10 @@ int main(int argc, char **argv) {
 	ok(write, fd, buf, strlen(buf));
 	ok(close, fd);
 
+	fd = ok(open, "/proc/self/setgroups", O_WRONLY);
+	ok(write, fd, "deny", 4);
+	ok(close, fd);
+
 	sprintf(buf, "%d %d 1\n", newgid, gid);
 	fd = ok(open, "/proc/self/gid_map", O_WRONLY);
 	ok(write, fd, buf, strlen(buf));
