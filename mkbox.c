@@ -203,12 +203,19 @@ int main(int argc, char **argv) {
 	ok(write, fd, buf, strlen(buf));
 	ok(close, fd);
 
+	/* must disallow setgroups() before writing to gid_map on
+	 * versions of linux with this feature:
+	 */
+	if ((fd = open("/proc/self/setgroups", O_WRONLY)) >= 0) {
+		ok(write, fd, "deny", 4);
+		ok(close, fd);
+	}
 	sprintf(buf, "%d %d 1\n", newgid, gid);
 	fd = ok(open, "/proc/self/gid_map", O_WRONLY);
 	ok(write, fd, buf, strlen(buf));
 	ok(close, fd);
 
-	/* initially we're nobody, change to 3333 */	
+	/* initially we're nobody, change to newgid/newuid */
 	ok(setresgid, newgid, newgid, newgid);
 	ok(setresuid, newuid, newuid, newuid);
 
