@@ -54,27 +54,67 @@ int dropcaps(void) {
 	return capset(&header, data);
 }
 
+void usage(void) {
+	fprintf(stderr,
+"usage: mkbox [ options ]* <root>\n"
+"\n"
+"options: --with-dev      mount /dev at sandbox's /dev\n"
+"                         (otherwise only /dev/{null,zero,random})\n"
+"         --with-sys      mount /sys at sandbox's /sys\n"
+"         --with-proc     mount /proc at sandbox's /proc\n"
+"         --data=<path>   mount <path> at sandbox's /data (rw)\n"
+"         --init=<path>   exec <path> in sandbox (default: /bin/sh)\n"
+"\n"
+	);
+}
+
 int main(int argc, char **argv) {
+	int newuid = 3333;
+	int newgid = 3333;
+	int with_sys = 0;
+	int with_proc = 0;
+	int with_dev = 0;
 	char buf[1024];
 	int fd;
-	const char *sandbox;
-	const char *databox;
+	const char *sandbox = NULL;
+	const char *databox = NULL;
+	const char *initbin = "/bin/sh";
 	uid_t uid;
 	gid_t gid;
 	pid_t cpid;
 
-	if (argc != 3) {
-		fprintf(stderr,
-			"usage: mkbox <sandbox-rootdir> <sandbox-datadir>\n");
+	argv++;
+	argc--;
+	while (argc > 0) {
+		if (argv[0][0] != '-') break;
+		if (!strcmp(argv[0], "--with-sys")) {
+			with_sys = 1;
+		} else if (!strcmp(argv[0], "--with-proc")) {
+			with_proc = 1;
+		} else if (!strcmp(argv[0], "--with-dev")) {
+			with_dev = 1;
+		} else if (!strncmp(argv[0], "--init=", 7)) {
+			initbin = argv[0] + 7;
+		} else if (!strncmp(argv[0], "--data=", 7)) {
+			databox = argv[0] + 7;
+		} else {
+			usage();
+			return -1;
+		}
+		argv++;
+		argc--;
+	}
+	if (argc != 1) {
+		usage();
 		return -1;
 	}
-	sandbox = argv[1];
-	databox = argv[2];
+	sandbox = argv[0];
 
 	uid = getuid();
 	gid = getgid();
 
-	ok(unshare, CLONE_NEWPID|CLONE_NEWNS|CLONE_NEWUTS|
+	ok(unshare, CLONE_NEWPID|
+		CLONE_NEWNS|CLONE_NEWUTS|
 		CLONE_NEWIPC|CLONE_NEWUSER);
 
 	/* ensure that changes to our mount namespace do not "leak" to
@@ -97,55 +137,79 @@ int main(int argc, char **argv) {
 	ok(mkdir, "dev", 0755);
 	ok(mkdir, ".oldroot", 0755);
 
-	/* mount read-write data volume */
-	ok(mount, databox, "data", NULL, MS_BIND|MS_NOSUID, NULL);
+	if (databox) {
+		/* mount read-write data volume */
+		ok(mount, databox, "data", NULL, MS_BIND|MS_NOSUID|MS_NODEV, NULL);
+	}
 
-	/* mount a tmpfs for dev */
-	ok(mount, "sandbox-dev", "dev", "tmpfs",
-		MS_NOSUID|MS_NOEXEC|MS_NOATIME,
-		"size=64k,nr_inodes=16,mode=755");
+	if (with_proc) {
+		rmdir("xproc");
+		rmdir("proc");
+		ok(mkdir, "xproc", 0755);
+		ok(mkdir, "proc", 0755);
+		/* we need to hang on to the old proc in order to mount our
+		 * new proc later on
+		 */
+		ok(mount, "/proc", "xproc", NULL, MS_BIND|MS_REC, NULL);
+	}
+	if (with_sys) {
+		rmdir("sys");
+		ok(mkdir, "sys", 0755);
+		ok(mount, "/sys", "sys", NULL, MS_BIND|MS_REC, NULL);
+	}
 
-	/* populate bare minimum device nodes */
-	/* create bind points */
-	ok(close, ok(open, "dev/null", O_WRONLY|O_CREAT, 0666));
-	ok(close, ok(open, "dev/zero", O_WRONLY|O_CREAT, 0666));
+	if (with_dev) {
+		ok(mount, "/dev", "dev", NULL, MS_BIND|MS_REC, NULL);
+	} else {
+		/* mount a tmpfs for dev */
+		ok(mount, "sandbox-dev", "dev", "tmpfs",
+			MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_NOATIME,
+			"size=64k,nr_inodes=16,mode=755");
 
-	/* bind mount the device nodes we want */ 
-	ok(mount, "/dev/null", "dev/null", NULL, MS_BIND, NULL);
-	ok(mount, "/dev/zero", "dev/zero", NULL, MS_BIND, NULL);
+		/* populate bare minimum device nodes */
+		/* create bind points */
+		ok(mknod, "dev/null", S_IFREG | 0666, 0);
+		ok(mknod, "dev/zero", S_IFREG | 0666, 0);
+		ok(mknod, "dev/random", S_IFREG | 0666, 0);
+		ok(mknod, "dev/urandom", S_IFREG | 0666, 0);
 
-	/* note: MS_RDONLY does not work when doing the initial bind */
-	ok(mount, "dev", "dev", NULL,
-		MS_RDONLY|MS_NOSUID|MS_NOEXEC|MS_REMOUNT|MS_NOATIME|MS_BIND,
-		NULL);
+		/* bind mount the device nodes we want */ 
+		ok(mount, "/dev/null", "dev/null", NULL, MS_BIND, NULL);
+		ok(mount, "/dev/zero", "dev/zero", NULL, MS_BIND, NULL);
+		ok(mount, "/dev/urandom", "dev/random", NULL, MS_BIND, NULL);
+		ok(mount, "/dev/urandom", "dev/urandom", NULL, MS_BIND, NULL);
 
-	/* map UID/GID 3333/3333 to outer UID/GID */
-	sprintf(buf, "3333 %d 1\n", uid);
+		/* note: MS_RDONLY does not work when doing the initial bind */
+		ok(mount, "dev", "dev", NULL,
+			MS_REMOUNT | MS_BIND | MS_NOEXEC |
+			MS_NOSUID | MS_NODEV | MS_RDONLY,
+			NULL);
+	}
+
+	/* map new UID/GID to outer UID/GID */
+	sprintf(buf, "%d %d 1\n", newuid, uid);
 	fd = ok(open, "/proc/self/uid_map", O_WRONLY);
 	ok(write, fd, buf, strlen(buf));
 	ok(close, fd);
 
-	sprintf(buf, "3333 %d 1\n", gid);
+	sprintf(buf, "%d %d 1\n", newgid, gid);
 	fd = ok(open, "/proc/self/gid_map", O_WRONLY);
 	ok(write, fd, buf, strlen(buf));
 	ok(close, fd);
 
 	/* initially we're nobody, change to 3333 */	
-	ok(setresgid, 3333, 3333, 3333);
-	ok(setresuid, 3333, 3333, 3333);
+	ok(setresgid, newgid, newgid, newgid);
+	ok(setresuid, newuid, newuid, newuid);
 
 	/* sandbox becomes our new root, detach the old one */
 	ok(pivot_root, ".", ".oldroot");
 	ok(umount2, ".oldroot", MNT_DETACH);
-	unlink(".oldroot");
+	ok(rmdir, ".oldroot");
 
 	/* remount root to finalize permissions */
 	ok(mount, "/", "/", NULL,
-		MS_RDONLY|MS_NOSUID|MS_REMOUNT|MS_NOATIME|MS_BIND|MS_RDONLY,
+		MS_RDONLY|MS_BIND|MS_NOSUID|MS_REMOUNT,
 		NULL);
-
-	/* discard all capability bits */
-	ok(dropcaps);
 
 	/* we must fork to become pid 1 in the new pid namespace */
 	cpid = ok(fork);
@@ -155,7 +219,15 @@ int main(int argc, char **argv) {
 			fprintf(stderr, "mkbox child pid != 1?!\n");
 			return -1;
 		}
-		ok(execl, "/bin/sh", "/bin/sh", NULL);
+		if (with_proc) {
+			ok(mount, "/proc", "/proc", "proc", MS_NOSUID, NULL);
+			ok(umount2, "/xproc", MNT_DETACH);
+		}
+
+		/* discard all capability bits */
+		ok(dropcaps);
+
+		ok(execl, initbin, initbin, NULL);
 		exit(0);
 	}
 

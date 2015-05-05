@@ -12,7 +12,7 @@ test: mkbox
 	cp /bin/busybox sandbox/bin
 	chmod 755 sandbox/bin/busybox
 	( cd sandbox/bin && for x in $$(busybox --list) ; do ln -fs busybox $$x ; done )
-	./mkbox sandbox `pwd`/databox
+	./mkbox --data=`pwd`/databox --with-proc sandbox
 
 clean-test::
 	rm -rf sandbox databox
