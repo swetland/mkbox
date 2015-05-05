@@ -62,6 +62,7 @@ void usage(void) {
 "                         (otherwise only /dev/{null,zero,random})\n"
 "         --with-sys      mount /sys at sandbox's /sys\n"
 "         --with-proc     mount /proc at sandbox's /proc\n"
+"         --with-tmp      mount tmpfs at sandbox's /tmp\n"
 "         --data=<path>   mount <path> at sandbox's /data (rw)\n"
 "         --init=<path>   exec <path> in sandbox (default: /bin/sh)\n"
 "\n"
@@ -74,6 +75,7 @@ int main(int argc, char **argv) {
 	int with_sys = 0;
 	int with_proc = 0;
 	int with_dev = 0;
+	int with_tmp = 0;
 	char buf[1024];
 	int fd;
 	const char *sandbox = NULL;
@@ -93,6 +95,8 @@ int main(int argc, char **argv) {
 			with_proc = 1;
 		} else if (!strcmp(argv[0], "--with-dev")) {
 			with_dev = 1;
+		} else if (!strcmp(argv[0], "--with-tmp")) {
+			with_tmp = 1;
 		} else if (!strncmp(argv[0], "--init=", 7)) {
 			initbin = argv[0] + 7;
 		} else if (!strncmp(argv[0], "--data=", 7)) {
@@ -143,14 +147,14 @@ int main(int argc, char **argv) {
 	}
 
 	if (with_proc) {
-		rmdir("xproc");
+		rmdir(".oldproc");
 		rmdir("proc");
-		ok(mkdir, "xproc", 0755);
+		ok(mkdir, ".oldproc", 0755);
 		ok(mkdir, "proc", 0755);
 		/* we need to hang on to the old proc in order to mount our
 		 * new proc later on
 		 */
-		ok(mount, "/proc", "xproc", NULL, MS_BIND|MS_REC, NULL);
+		ok(mount, "/proc", ".oldproc", NULL, MS_BIND|MS_REC, NULL);
 	}
 	if (with_sys) {
 		rmdir("sys");
@@ -185,6 +189,13 @@ int main(int argc, char **argv) {
 			MS_NOSUID | MS_NODEV | MS_RDONLY,
 			NULL);
 	}
+	if (with_tmp) {
+		rmdir("tmp");
+		ok(mkdir, "tmp", 0770);
+		ok(mount, "sandbox-tmp", "tmp", "tmpfs",
+			MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_NOATIME,
+			"size=16m,nr_inodes=4k,mode=770");
+	}
 
 	/* map new UID/GID to outer UID/GID */
 	sprintf(buf, "%d %d 1\n", newuid, uid);
@@ -206,11 +217,6 @@ int main(int argc, char **argv) {
 	ok(umount2, ".oldroot", MNT_DETACH);
 	ok(rmdir, ".oldroot");
 
-	/* remount root to finalize permissions */
-	ok(mount, "/", "/", NULL,
-		MS_RDONLY|MS_BIND|MS_NOSUID|MS_REMOUNT,
-		NULL);
-
 	/* we must fork to become pid 1 in the new pid namespace */
 	cpid = ok(fork);
 
@@ -221,8 +227,14 @@ int main(int argc, char **argv) {
 		}
 		if (with_proc) {
 			ok(mount, "/proc", "/proc", "proc", MS_NOSUID, NULL);
-			ok(umount2, "/xproc", MNT_DETACH);
+			ok(umount2, "/.oldproc", MNT_DETACH);
+			rmdir("/.oldproc");
 		}
+
+		/* remount root to finalize permissions */
+		ok(mount, "/", "/", NULL,
+			MS_RDONLY|MS_BIND|MS_NOSUID|MS_REMOUNT,
+			NULL);
 
 		/* discard all capability bits */
 		ok(dropcaps);
